@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "description": "process-images",
   "author": "Jovin Mwilanga <jovinbeda@hotmail.com>",
-  "private": true,
+  "private": false,
   "license": "MIT",
   "engines": {
     "node": "8.1.0",
