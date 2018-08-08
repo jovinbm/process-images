@@ -129,7 +129,17 @@ const processImageFile = async (args: {
       if (err) {
         reject(err);
       } else {
-        resolve(Number(parseFloat(size)) || 0.0);
+        if (size.includes('GB')) {
+          resolve(Number(parseFloat(size)) * 1000000 || 0.0);
+        } else if (size.includes('MB')) {
+          resolve(Number(parseFloat(size)) * 1000 || 0.0);
+        } else if (size.includes('KB')) {
+          resolve(Number(parseFloat(size)) || 0.0);
+        } else if (size.includes('B')) {
+          resolve(Number(parseFloat(size)) / 1000 || 0.0);
+        } else {
+          reject('no unit on returned size');
+        }
       }
     });
   });
@@ -202,7 +212,7 @@ const processImageFile = async (args: {
         .interlace('None')
         .colorspace('sRGB');
 
-      if (!(version.height >= 400 && file_size_kb <= 70.0)) {
+      if (version.height < 400 || (version.height >= 400 && file_size_kb >= 70.0)) {
         processor = processor
         // @ts-ignore
           .resize(null, version.height);
