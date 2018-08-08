@@ -1,0 +1,1 @@
+# Image Resizer and Processor used at The African Exponent
