@@ -1,10 +1,13 @@
+import fileType, { FileTypeResult } from 'file-type';
 import * as fs from 'fs';
-import * as gm from 'gm';
+import imageSize from 'image-size';
+import imagemin from 'imagemin';
+import imageminGifsicle from 'imagemin-gifsicle';
+import imageminJpegtran from 'imagemin-jpegtran';
+import imageminPngquant from 'imagemin-pngquant';
+import Jimp from 'jimp';
 import * as path from 'path';
-
-const im = gm.subClass({
-  imageMagick: true,
-});
+import readChunk from 'read-chunk';
 
 export interface IVersion {
   height: number;
@@ -12,17 +15,18 @@ export interface IVersion {
 
 export type TImageFormat = 'GIF' | 'PNG' | 'JPEG';
 
-
 const getProcessedFileName = (args: {
-  absolute_file_path: string,
-  width: number,
-  height: number,
-  version: IVersion | null
+  absolute_file_path: string;
+  width: number;
+  height: number;
+  version: IVersion | null;
 }): string => {
   const ext = path.extname(args.absolute_file_path);
   const base_name = path.basename(args.absolute_file_path, ext);
   const aspect_ratio: number = Number((args.width / args.height).toFixed(3));
-  return `${base_name}_aspR_${aspect_ratio}_w${args.width}_h${args.height}_e${args.version ? args.version.height : ''}${ext}`;
+  return `${base_name}_aspR_${aspect_ratio}_w${args.width}_h${args.height}_e${
+    args.version ? args.version.height : ''
+  }${ext}`;
 };
 
 const validateFile = async (absolute_file_path: string): Promise<void> => {
@@ -57,11 +61,15 @@ const validateFile = async (absolute_file_path: string): Promise<void> => {
   // must have a valid basename
   // path.basename('/foo/bar/baz/asdf/quux.html', '.html'); = quux
   if (path.basename(absolute_file_path, ext).length < 1) {
-    throw new Error('file must have a valid base name when excluding extension');
+    throw new Error(
+      'file must have a valid base name when excluding extension'
+    );
   }
 };
 
-const validateOutputDirectory = async (absolute_output_directory: string): Promise<void> => {
+const validateOutputDirectory = async (
+  absolute_output_directory: string
+): Promise<void> => {
   // must be absolute path
   if (!path.isAbsolute(absolute_output_directory)) {
     throw new Error('Path to output folder has to be absolute');
@@ -84,9 +92,9 @@ const validateOutputDirectory = async (absolute_output_directory: string): Promi
 };
 
 const processImageFile = async (args: {
-  absolute_file_path: string,
-  absolute_output_directory: string,
-  versions: IVersion[]
+  absolute_file_path: string;
+  absolute_output_directory: string;
+  versions: IVersion[];
 }): Promise<{
   // a file name for each version
   // e.g.
@@ -94,150 +102,122 @@ const processImageFile = async (args: {
   // 80: jovin_aspR_0.5_w200_h100_e80.jpg
   // 200: jovin_aspR_0.5_w200_h100_e200.jpg
   // 400: jovin_aspR_0.5_w200_h100_e400.jpg
-  [key: string]: string
+  [key: string]: string;
 }> => {
   await validateFile(args.absolute_file_path);
   await validateOutputDirectory(args.absolute_output_directory);
   const result_value: {
-    [key: string]: string
+    [key: string]: string;
   } = {};
-
-  const acceptableFormats = ['GIF', 'PNG', 'JPEG'];
+  let file_type_result: FileTypeResult | undefined;
   let image_width: number;
   let image_height: number;
-  let file_size_kb: number;
-  let processor: gm.State = im(args.absolute_file_path);
 
-  const dimensions = await new Promise<{ width: number, height: number }>((resolve, reject) => {
-    processor = processor.size((err, size) => {
-      if (err) {
-        reject(err);
-      } else {
-        resolve({
-          width: size.width,
-          height: size.height,
-        });
-      }
-    });
-  });
-
-  image_width = dimensions.width;
-  image_height = dimensions.height;
-
-  file_size_kb = await new Promise<number>((resolve, reject) => {
-    processor = processor.filesize((err, size) => {
-      if (err) {
-        reject(err);
-      } else {
-        if (size.includes('GB')) {
-          resolve(Number(parseFloat(size)) * 1000000 || 0.0);
-        } else if (size.includes('MB')) {
-          resolve(Number(parseFloat(size)) * 1000 || 0.0);
-        } else if (size.includes('KB')) {
-          resolve(Number(parseFloat(size)) || 0.0);
-        } else if (size.includes('B')) {
-          resolve(Number(parseFloat(size)) / 1000 || 0.0);
-        } else {
-          reject('no unit on returned size');
-        }
-      }
-    });
-  });
-
-  await new Promise<TImageFormat>((resolve, reject) => {
-    processor = processor.format((err, format) => {
-      if (err) {
-        reject(err);
-      } else {
-        if (acceptableFormats.indexOf(format) === -1) {
-          reject(new Error('The image format was not recognized. Only jpeg, png and gif files are allowed'));
-        } else {
-          resolve(format as TImageFormat);
-        }
-      }
-    });
-  });
-
-  // prepare original file, not resized, this will be considered for giving the link to the original optimized file
-  await new Promise((resolve, reject) => {
-    const file_output_path = path.join(args.absolute_output_directory, getProcessedFileName({
-      absolute_file_path: args.absolute_file_path,
-      width: image_width,
-      height: image_height,
-      version: null,
-    }));
-    im(args.absolute_file_path)
-      .filter('Triangle')
-      .define('filter:support=2')
-      .unsharp(0.25, 0.25, 8, 0.065)
-      .quality(82)
-      .define('jpeg:fancy-upsampling=off')
-      .define('png:compression-filter=5')
-      .define('png:compression-level=9')
-      .define('png:compression-strategy=1')
-      .define('png:exclude-chunk=all')
-      .interlace('None')
-      .colorspace('sRGB')
-      .write(file_output_path, (err) => {
+  await Promise.all([
+    new Promise((resolve, reject) => {
+      imageSize(args.absolute_file_path, (err, dimensions) => {
         if (err) {
           reject(err);
         } else {
-          result_value.original = path.basename(file_output_path);
+          image_width = dimensions.width;
+          image_height = dimensions.height;
           resolve();
         }
       });
-  });
+    }),
+    new Promise((resolve, reject) => {
+      readChunk(args.absolute_file_path, 0, fileType.minimumBytes)
+        .then(buffer => {
+          file_type_result = fileType(buffer);
+          resolve();
+        })
+        .catch(reject);
+    }),
+  ]);
 
-  // prepare the other versions
+  if (!file_type_result) {
+    throw new Error('The image format was not recognized.');
+  }
+
+  if (['png', 'gif', 'jpg'].indexOf(file_type_result.ext) === -1) {
+    throw new Error('The image is not png, gif or jpg.');
+  }
+
+  // resize the images
   const processPromises: Promise<any>[] = [];
   args.versions.map(version => {
-    processPromises.push(new Promise((resolve, reject) => {
-      const file_output_path = path.join(args.absolute_output_directory, getProcessedFileName({
-        absolute_file_path: args.absolute_file_path,
-        width: image_width,
-        height: image_height,
-        version,
-      }));
-      let processor = im(args.absolute_file_path);
-      processor = processor
-        .filter('Triangle')
-        .define('filter:support=2')
-        .unsharp(0.25, 0.25, 8, 0.065)
-        .quality(82)
-        .define('jpeg:fancy-upsampling=off')
-        .define('png:compression-filter=5')
-        .define('png:compression-level=9')
-        .define('png:compression-strategy=1')
-        .define('png:exclude-chunk=all')
-        .interlace('None')
-        .colorspace('sRGB');
-
-      if (version.height < 400 || (version.height >= 400 && file_size_kb >= 70.0)) {
-        processor = processor
-        // @ts-ignore
-          .resize(null, version.height);
-      }
-
-      processor.write(file_output_path, (err?: Error) => {
-        if (err) {
-          reject(err);
-        } else {
-          result_value[version.height] = path.basename(file_output_path);
-          resolve();
-        }
-      });
-    }));
+    // prepare the versions
+    processPromises.push(
+      Promise.resolve().then(() => {
+        const file_output_path = path.join(
+          args.absolute_output_directory,
+          getProcessedFileName({
+            absolute_file_path: args.absolute_file_path,
+            width: image_width,
+            height: image_height,
+            version,
+          })
+        );
+        return Jimp.read(args.absolute_file_path)
+          .then(img => {
+            return img
+              .resize(Jimp.AUTO, version.height)
+              .write(file_output_path);
+          })
+          .then(() => {
+            result_value[version.height] = path.basename(file_output_path);
+          });
+      })
+    );
   });
+
+  // copy the original image to final directory
+  processPromises.push(
+    Promise.resolve().then(() => {
+      const file_output_path = path.join(
+        args.absolute_output_directory,
+        getProcessedFileName({
+          absolute_file_path: args.absolute_file_path,
+          width: image_width,
+          height: image_height,
+          version: null,
+        })
+      );
+      return Jimp.read(args.absolute_file_path)
+        .then(img => {
+          return img.write(file_output_path);
+        })
+        .then(() => {
+          result_value.original = path.basename(file_output_path);
+        });
+    })
+  );
 
   await Promise.all(processPromises);
 
+  // compress and optimize all images
+  await imagemin(
+    [`${args.absolute_output_directory}/*.{jpg,png}`],
+    args.absolute_output_directory,
+    {
+      plugins: [
+        imageminGifsicle({
+          colors: 256,
+          interlaced: true,
+          optimizationLevel: 3,
+        }),
+        imageminJpegtran({ progressive: true }),
+        imageminPngquant({ quality: [0.85, 1], strip: true }),
+      ],
+    }
+  );
   return result_value;
 };
 
 export const processImages = async (args: {
-  absolute_directory_path: string,
-  absolute_output_directory_path: string,
-  versions: IVersion[]
+  absolute_directory_path: string;
+  absolute_output_directory_path: string;
+  versions: IVersion[];
 }): Promise<{
   // key here is the original file name of image
   // e.g jovin.jpg
@@ -248,35 +228,45 @@ export const processImages = async (args: {
     // 80: jovin_aspR_0.5_w200_h100_e80.jpg
     // 200: jovin_aspR_0.5_w200_h100_e200.jpg
     // 400: jovin_aspR_0.5_w200_h100_e400.jpg
-    [key: string]: string
-  }
+    [key: string]: string;
+  };
 }> => {
   await validateOutputDirectory(args.absolute_directory_path);
   await validateOutputDirectory(args.absolute_output_directory_path);
 
   const return_value: {
     [key: string]: {
-      [key: string]: string
-    }
+      [key: string]: string;
+    };
   } = {};
 
-  const file_names: string[] = await new Promise<string[]>((resolve, reject) => {
-    fs.readdir(args.absolute_directory_path, (err, file_paths) => {
-      if (err) {
-        reject(err);
-      } else {
-        resolve(file_paths);
-      }
-    });
-  });
+  const file_names: string[] = await new Promise<string[]>(
+    (resolve, reject) => {
+      fs.readdir(args.absolute_directory_path, (err, file_paths) => {
+        if (err) {
+          reject(err);
+        } else {
+          resolve(file_paths);
+        }
+      });
+    }
+  );
 
   await Promise.all(
     file_names
-      .filter(name => ['.jpg', '.jpeg', '.gif', '.png'].includes(path.extname(name.toLowerCase())))
+      .filter(name =>
+        ['.jpg', '.jpeg', '.gif', '.png'].includes(
+          path.extname(name.toLowerCase())
+        )
+      )
       .map(file_path => {
+        console.log(file_path);
         return new Promise((resolve, reject) => {
           processImageFile({
-            absolute_file_path: path.join(args.absolute_directory_path, file_path),
+            absolute_file_path: path.join(
+              args.absolute_directory_path,
+              file_path
+            ),
             absolute_output_directory: args.absolute_output_directory_path,
             versions: args.versions,
           })
@@ -286,7 +276,7 @@ export const processImages = async (args: {
             })
             .catch(reject);
         });
-      }),
+      })
   );
 
   return return_value;

@@ -1,25 +1,26 @@
-import * as path from 'path';
-import * as rimraf from 'rimraf';
+import path from 'path';
+import rimraf from 'rimraf';
 import { processImages } from '../index';
 
 async function doTest(): Promise<void> {
-  await Promise.all([
-    '../images0_out/**/*',
-    '../images1_out/**/*',
-    '../images2_out/**/*',
-    '../images3_out/**/*',
-  ].map(p => {
-    return new Promise((resolve, reject) => {
-      rimraf(p, (err) => {
-        if (err) {
-          reject(err);
-        }
-        else {
-          resolve(true);
-        }
+  await Promise.all(
+    [
+      '../images0_out/**/*',
+      '../images1_out/**/*',
+      '../images2_out/**/*',
+      '../images3_out/**/*',
+    ].map(p => {
+      return new Promise((resolve, reject) => {
+        rimraf(p, err => {
+          if (err) {
+            reject(err);
+          } else {
+            resolve(true);
+          }
+        });
       });
-    });
-  }));
+    })
+  );
 
   await Promise.all([
     processImages({
