@@ -16,7 +16,7 @@
     "build": "tsc"
   },
   "dependencies": {
-    "file-type": "^11.1.0",
+    "file-type": "^16.5.4",
     "image-size": "^0.7.4",
     "imagemin": "^6.1.0",
     "imagemin-gifsicle": "^6.0.1",
